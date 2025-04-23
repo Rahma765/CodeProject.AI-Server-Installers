@@ -8,7 +8,7 @@
 #   --mount type=bind,source=C:\ProgramData\CodeProject\AI\docker/modules,target=/app/modules \
 #   codeproject/ai-server
 #
-# ASSUMPTION: This is being build from the root directory of the solution. This
+# ASSUMPTION: This is being built from the root directory of the solution. This
 # is set in the build_docker script as the last param to the docker buildx command,
 # namely the "../..". This takes us from /Installers/Docker to /. and then this
 # image file proceeds
@@ -20,7 +20,7 @@
 # inside the build stages. If you wish to use these inside a stage, re-grab them 
 # inside that stage
 ARG UBUNTU_VERSION=22.04
-ARG DOTNET_VERSION=8.0
+ARG DOTNET_VERSION=9.0
 ARG CPAI_VERSION
 
 # It's important to pull the correct base for the target architecture, otherwise
@@ -51,7 +51,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Grab the values passed in via command line here so we can use inside this stage
 ARG UBUNTU_VERSION=22.04
-ARG DOTNET_VERSION=8.0
+ARG DOTNET_VERSION=9.0
 ARG CPAI_VERSION
 
 ENV CPAI_VERSION=$CPAI_VERSION
@@ -99,10 +99,11 @@ LABEL "Description"="CodeProject.AI Server with CPU-only processing."
 #   mesa-utils
 # So we can install modules
 #   curl jq unzip wget rsync ca-certificates (ca-certificates so we can do --no-check-certificate, jq for json parsing)
+# So we can build the wheels of some modules (eg PaddleOCR)
+#   patch
 # This stops the "lsmod: not found" error
 #   kmod
 # This allows us to query process info
-# Install pstree
 #   psmisc
 
 RUN apt-get update -y && apt-get install -y --no-install-recommends \
@@ -127,17 +128,17 @@ RUN apt-get update -y && apt-get install -y --no-install-recommends \
                     \
     psmisc          \
                     \
+    patch           \
+                    \
     kmod            > /dev/null
 
 
 # .NET -------------------------------------------------------------------------
 
 # Update packages and install .NET
-RUN wget "https://packages.microsoft.com/config/ubuntu/${UBUNTU_VERSION}/packages-microsoft-prod.deb" \
-         -O packages-microsoft-prod.deb --no-check-certificate                                     && \
-    dpkg -i packages-microsoft-prod.deb                                                            && \
-    rm packages-microsoft-prod.deb                                                                 && \
-    apt update && apt install aspnetcore-runtime-$DOTNET_VERSION -y                      > /dev/null
+RUN apt install software-properties-common -y                               && \
+    add-apt-repository ppa:dotnet/backports -y                              && \
+    apt-get update && apt-get install aspnetcore-runtime-$DOTNET_VERSION -y > /dev/null
 
 
 # Setup Python ----------------------------------------------------------------
@@ -196,17 +197,18 @@ RUN apt-get install -y --no-install-recommends            \
 
 # Install Python3.11, distutils and dev tools (so packages can be built if needed)
 # and pip install so we can install python packages. We don't need this for the
-# built in modules, but we know we have downloadable modules that could use Python3.9
+# built in modules, but we know we have downloadable modules that could use Python3.11
 # so we preempt the need.
-RUN apt-get install python3.11 -y && \
-   apt-get install python3.11-distutils -y && \
-   apt-get install python3.11-dev -y && \ 
-   python3.11 -m pip install --upgrade setuptools && \
-   python3.11 -m pip install --upgrade pip
+RUN apt-get install -y --no-install-recommends             \
+        python3.11                                &&       \
+    apt-get install -y --no-install-recommends             \
+        python3.11-distutils                               \
+        python3.11-dev                                     \ 
+        python3.11-venv                           &&       \
+    python3.11 -m pip install --upgrade setuptools &&      \
+    python3.11 -m pip install --upgrade pip        &&      \
+    python3.11 -m pip install virtualenv virtualenvwrapper > /dev/null
 
-#RUN apt python3.11-venv -y
-RUN apt install python3.11-venv -y && \
-    python3.11 -m pip install virtualenv virtualenvwrapper
 
 # Build the .NET source in a separate, discardable build container --------------
 
@@ -215,7 +217,7 @@ FROM mcr.microsoft.com/dotnet/sdk:$DOTNET_VERSION AS build
 # Grab the values passed in via command line here so we can use inside this stage
 # See https://docs.docker.com/engine/reference/builder/#scope
 ARG UBUNTU_VERSION=22.04
-ARG DOTNET_VERSION=8.0
+ARG DOTNET_VERSION=9.0
 ARG CPAI_VERSION
 ARG REPO_NAME
 ARG MODULES_REPO_NAME=CodeProject.AI-Modules
@@ -260,7 +262,7 @@ COPY /${REPO_NAME}/modules/ObjectDetectionYOLOv5Net/  modules/ObjectDetectionYOL
 
 # Build and publish Server
 WORKDIR "/src/src/server"
-RUN dotnet publish "Server.csproj" -c Release --no-self-contained --force -o /app/publish/server > /dev/null
+RUN dotnet publish "Server.csproj" -c Release --no-self-contained --force -o /app/publish/server
 
 # Build and publish .NET modules, copy over docker-specific modulesettings, and 
 # then copy over models
@@ -288,7 +290,6 @@ RUN dotnet publish ObjectDetectionYOLOv5Net.csproj -c Release --no-self-containe
           /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/                        &&       \
     mv -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/modulesettings.docker.build.json \
           /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/modulesettings.docker.json > /dev/null
-
 
 # BEGIN REVIEW ================================================================
 
@@ -349,6 +350,7 @@ COPY ["/${REPO_NAME}/src/SDK/install.sh",    "/app/publish/SDK/install.sh"]
 COPY ["/${REPO_NAME}/src/server/install.sh", "/app/publish/server/install.sh"]
 COPY ["/${REPO_NAME}/src/scripts",           "/app/publish/scripts"]
 COPY ["/${REPO_NAME}/src/setup.sh",          "/app/publish/setup.sh"]
+COPY ["/${REPO_NAME}/.env",                  "/app/publish/.env"]
 
 # Cleanup / setup
 RUN rm -rf /app/publish/SDK/Python/__pycache__ \

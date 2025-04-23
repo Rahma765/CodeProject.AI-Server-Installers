@@ -1,32 +1,69 @@
-# CodeProject.AI Server 3.0+
+# CodeProject.AI Server
 #
-# Docker file for arm64 CPU enabled image (eg Apple Silicon)
+# See https://github.com/ultralytics/ultralytics/blob/main/docker/Dockerfile-jetson
+# DOCKER Image build file for Jetson. It contains CUDA 10.2
+# 
+# docker run --name CodeProject.AI -d \
+# -p 32168:32168 -p 32168:32168/udp   \
+# --mount type=bind,source=/etc/codeproject/ai,target=/etc/codeproject/ai \
+# --mount type=bind,source=/opt/codeproject/ai,target=/app/modules \
+# --gpus all codeproject/ai-server:jetson
 #
-# docker run --name CodeProject.AI-Server -d
-#    -p 32168:32168 -p 32168:32168/udp \
-#   --mount type=bind,source=/Library/Application Support/CodeProject/AI/docker/data,target=/etc/codeproject/ai \
-#   --mount type=bind,source=/Library/Application Support/CodeProject/AI/docker/modules,target=/app/modules \
-#   codeproject/ai-server:arm64
 #
-# ASSUMPTION: This is being build from the root directory of the solution. This
+# ASSUMPTION: This is being built from the root directory of the solution. This
 # is set in the build_docker script as the last param to the docker buildx command,
 # namely the "../..". This takes us from /Installers/Docker to /. and then this
 # image file proceeds
-
+#
+# BE AWARE: this cuDNN equipped build may lock up when two YOLO equipped modules
+# are installed on it. Without cuDNN, .NET ONNX runtime for GPU doesn't work.
 
 # INITIAL SETUP ===============================================================
 
-# Note: we're before the first 'FROM' statment so these values are not available
+# Note: we're before the first 'FROM' statement so these values are not available
 # inside the build stages. If you wish to use these inside a stage, re-grab them 
 # inside that stage
-ARG UBUNTU_VERSION=22.04
-ARG DOTNET_VERSION=8.0
 ARG CPAI_VERSION
+ARG DOTNET_VERSION=9.0
 
-# It's important to pull the correct base for the target architecture, otherwise
-# building this image on, say, an x64 machine will result in the base image
-# being x64, not arm64 as assumed.
-FROM arm64v8/ubuntu:$UBUNTU_VERSION AS base
+ARG UBUNTU_VERSION=18.04
+
+ARG CUDA_VERSION=10.2
+ARG CUDA_MAJOR=10
+
+# FROM nvcr.io/nvidia/l4t-cuda:10.2.460-runtime as base - no longer available
+# FROM nvcr.io/nvidia/l4t-base:r32.7.1 as base
+# FROM 3dvl/l4t-cuda-dev:jetson-nano-r32.7-latest as base
+FROM gpuci/cuda-l4t:10.2-runtime-ubuntu18.04 as base
+
+# CUDA SETUP ===================================================================
+
+# NOTE: NVIDIA no longer hosts the packages needed for CUDA10.2 so setup is no
+#       longer possible in this form
+
+# RUN echo "NV_CUDA_LIB_VERSION      = $NV_CUDA_LIB_VERSION"
+# RUN echo "NV_NVML_DEV_VERSION      = $NV_NVML_DEV_VERSION"
+# RUN echo "NV_LIBNPP_DEV_VERSION    = $NV_LIBNPP_DEV_VERSION"
+# RUN echo "NV_LIBCUBLAS_DEV_PACKAGE = $NV_LIBCUBLAS_DEV_PACKAGE"
+# RUN echo "NV_LIBNCCL_DEV_PACKAGE   = $NV_LIBNCCL_DEV_PACKAGE"
+#
+# RUN apt-get update && apt-get install -y --no-install-recommends \
+#     cuda-nvml-dev-10-2=${NV_NVML_DEV_VERSION} \
+#     cuda-command-line-tools-10-2=${NV_CUDA_LIB_VERSION} \
+#     cuda-nvprof-10-2=${NV_CUDA_LIB_VERSION} \
+#     cuda-npp-dev-10-2=${NV_LIBNPP_DEV_VERSION} \
+#     cuda-libraries-dev-10-2=${NV_CUDA_LIB_VERSION} \
+#     cuda-minimal-build-10-2=${NV_CUDA_LIB_VERSION} \
+#     ${NV_LIBCUBLAS_DEV_PACKAGE} \
+#     ${NV_LIBNCCL_DEV_PACKAGE} \
+#    && rm -rf /var/lib/apt/lists/*
+#
+# apt from auto upgrading the cublas package. See https://gitlab.com/nvidia/container-images/cuda/-/issues/88
+# RUN apt-mark hold ${NV_LIBCUBLAS_DEV_PACKAGE_NAME} ${NV_LIBNCCL_DEV_PACKAGE_NAME}
+#
+# ENV LIBRARY_PATH /usr/local/cuda/lib64/stubs
+
+# END CUDA SETUP ===============================================================
 
 WORKDIR /app
 
@@ -35,7 +72,7 @@ WORKDIR /app
 RUN if ! type sudo 2>/dev/null; then echo "#!/bin/sh\n\${@}" > /usr/sbin/sudo; chmod +x /usr/sbin/sudo; fi
 
 # Environment vars ------------------------------------------------------------
-
+ 
 ENV ASPNETCORE_URLS=http://+:32168;http://+:5000
 
 # The simple log format is easier on my brain than json
@@ -47,16 +84,22 @@ ENV DOTNET_RUNNING_IN_CONTAINER=true
 # noninteractive frontend means no prompts or questions are asked and whenever a call requires an
 # answer, the default will be used. Installs will be non-interrupted and so won't hang. The Python
 # installs, for instance, require this in this current environment
-ENV DEBIAN_FRONTEND noninteractive
+ENV DEBIAN_FRONTEND=noninteractive
 
 # Grab the values passed in via command line here so we can use inside this stage
-ARG UBUNTU_VERSION=22.04
-ARG DOTNET_VERSION=8.0
+ARG UBUNTU_VERSION=18.04
+ARG DOTNET_VERSION=9.0
 ARG CPAI_VERSION
 
 ENV CPAI_VERSION=$CPAI_VERSION
 ENV UBUNTU_VERSION=$UBUNTU_VERSION
 ENV DOTNET_VERSION=$DOTNET_VERSION
+
+ARG CUDA_VERSION=10.2
+ARG CUDA_MAJOR=10
+
+ENV CUDA_VERSION=$CUDA_VERSION
+ENV CUDA_MAJOR=$CUDA_MAJOR
 
 # Setup the ports -------------------------------------------------------------
 
@@ -69,15 +112,14 @@ EXPOSE 32168/udp
 LABEL "Application"="CodeProject.AI Server"
 LABEL "Publisher"="CodeProject Solutions Inc"
 LABEL "Version"="${CPAI_VERSION}"
-LABEL "Target"="arm64 Ubuntu ${UBUNTU_VERSION}"
-LABEL "Description"="CodeProject.AI Server for Arm64 on ${UBUNTU_VERSION}. \
-Suitable for Apple Silicon macs, Orange Pi, Radxa ROCK and Raspberry Pi."
+LABEL "Target"="Jetson (arm64) specific ${UBUNTU_VERSION} with CUDA ${CUDA_VERSION}"
+LABEL "Description"="CodeProject.AI Server for Jetson (arm64) on ${UBUNTU_VERSION} with CUDA ${CUDA_VERSION}."
+
 
 # Install required libraries --------------------------------------------------
 
 # Install packages. In order:
-# Required to allow packages to build
-#   apt-utils
+#
 # Required for SkiaSharp
 #   libfontconfig1
 # Required for System.Drawing
@@ -88,46 +130,50 @@ Suitable for Apple Silicon macs, Orange Pi, Radxa ROCK and Raspberry Pi."
 #   ffmpeg libsm6 libxext6 libc6-dev
 # So we can query glxinfo for GPU info
 #   mesa-utils
-# So we can build psutils (and other wheels)
-#   gcc python3-dev
 # So we can install modules
 #   curl jq unzip wget rsync ca-certificates (ca-certificates so we can do --no-check-certificate, jq for json parsing)
 # This stops the "lsmod: not found" error
 #   kmod
 
-RUN apt-get update  -y && \
-    apt-get upgrade -y --no-install-recommends apt-utils && \
-    apt-get install -y --no-install-recommends \
-        libfontconfig1  \
-        libgdiplus      \
-        libjpeg-dev     \
-        zlib1g-dev      \
-                        \
-        ffmpeg          \
-        libc6-dev       \
-        libsm6          \
-        libxext6        \
-                        \
-        mesa-utils      \
-                        \
-        gcc             \
-        python3-dev     \
-                        \
-        ca-certificates \
-        curl            \
-        jq              \
-        rsync           \
-        unzip           \
-        wget            \
-                        \
-        psmisc          \
-                        \
-        kmod            > /dev/null
+#apt-key adv --fetch-keys http://repo.download.nvidia.com/jetson/keys/7fa2af80.pub
+
+# Add the NVIDIA repository key
+# RUN curl -fsSL https://repo.download.nvidia.com/jetson/keys/7fa2af80.pub | gpg --dearmor -o /etc/apt/trusted.gpg.d/nvidia-archive-keyring.gpg
+# Add the NVIDIA repository to the sources list (adjust URL for your version)
+# RUN echo "deb [signed-by=/etc/apt/trusted.gpg.d/nvidia-archive-keyring.gpg] https://repo.download.nvidia.com/jetson/common r32.4 main" | tee /etc/apt/sources.list.d/nvidia.list
+# apt-key adv --keyserver keyserver.ubuntu.com --recv-keys 3B4FE6ACC0B21F32
+
+RUN apt-get update -y && apt-get install -y --no-install-recommends \
+    libfontconfig1  \
+    libgdiplus      \
+    libjpeg-dev     \
+    zlib1g-dev      \
+                    \
+    ffmpeg          \
+    libc6-dev       \
+    libsm6          \
+    libxext6        \
+                    \
+    mesa-utils      \
+                    \
+    ca-certificates \
+    curl            \
+    jq              \
+    rsync           \
+    unzip           \
+    wget            \
+                    \
+    psmisc          \
+                    \
+    kmod            > /dev/null
+
+    # Not needed. Probably.
+    # apt-utils
 
 
-# .NET -------------------------------------------------------------------------
+# .NET ------------------------------------------------------------------------
 
-# Update packages and install .NET
+# Update packages and install NET
 
 # See https://learn.microsoft.com/en-us/dotnet/core/install/linux-scripted-manual#scripted-install
 RUN wget https://dot.net/v1/dotnet-install.sh -O dotnet-install.sh
@@ -145,68 +191,58 @@ RUN echo 'export PATH=$PATH:$DOTNET_ROOT' >> $HOME/.bashrc
 
 # Setup Python ----------------------------------------------------------------
 
-# Combining all these together into a single layer
-# 1. Add deadsnakes repo
-# 2. Install pip for python3,  python3-apt and python3-setuptools
-#    Note that this (currently) installs python3.8 as a dependency. It could be
-#    in the future that a different version of python is installed instead, in
-#    which case we may need to pin the installed python version.
-# 3. Install Python 3.8 as well as dev and distutils so packages can be built
-#    if needed, and venv for creating virtual environments
-# 4. Using the now installed Python 3.8, upgrade the python setuptools and dev
-#    packages to the latest
-# 5. Install virtualenv virtualenvwrapper for python 3.8
+# Allow us to get older, deceased Python packages from dead snakes
+RUN apt-get install software-properties-common -y && \
+    add-apt-repository ppa:deadsnakes/ppa -y
 
-RUN apt-get install software-properties-common -y &&      \
-    add-apt-repository ppa:deadsnakes/ppa -y      &&      \
-    apt-get install -y --no-install-recommends            \
-        python3-pip                                       \
-        python3-apt                                       \
-        python3-setuptools                        &&      \
-    apt-get install -y --no-install-recommends            \
-        python3.8                                 &&      \
-    apt-get install -y --no-install-recommends            \
-        python3.8-distutils                               \
-        python3.8-dev                                     \ 
-        python3.8-venv                            &&      \
-    python3.8 -m pip install --upgrade setuptools &&      \
-    python3.8 -m pip install --upgrade pip        &&      \
-    python3.8 -m pip install virtualenv virtualenvwrapper > /dev/null
+# This (currently) installs python3.8 as a dependency. It could be in the future
+# that a different version of python is installed instead, in which case we may
+# need to pin the installed python version.
+RUN apt-get install python3-pip python3-apt python3-setuptools -y
 
-# Python 3.9: Combining all these together into a single layer, but leveraging
-# the work done in Python 3.8:
-# 1. Install Python 3.9 as well as dev and distutils so packages can be built
-#    if needed, and venv for creating virtual environments
-# 4. Using the now installed Python 3.8, upgrade the python setuptools and dev
-#    packages to the latest
-# 5. Install virtualenv virtualenvwrapper for python 3.8
+# Install Python3.8, distutils and dev tools (so packages can be built if needed)
+# and pip install so we can install python packages
+RUN apt-get install python3.8 -y && \
+    apt-get install python3.8-distutils -y && \
+    apt-get install python3.8-dev -y && \ 
+    python3.8 -m pip install --upgrade setuptools && \
+    python3.8 -m pip install --upgrade pip
 
-RUN apt-get install -y --no-install-recommends            \
-        python3.9                                 &&      \
-    apt-get install -y --no-install-recommends            \
-        python3.9-distutils                               \
-        python3.9-dev                                     \ 
-        python3.9-venv                            &&      \
-    python3.9 -m pip install --upgrade setuptools &&      \
-    python3.9 -m pip install --upgrade pip        &&      \
-    python3.9 -m pip install virtualenv virtualenvwrapper > /dev/null
+# install virtual env tools
+RUN apt install python3.8-venv -y && \
+    python3.8 -m pip install virtualenv virtualenvwrapper
+
+
+# Install Python3.9, distutils and dev tools (so packages can be built if needed)
+# and pip install so we can install python packages
+# RUN apt-get install python3.9 -y && \
+#    apt-get install python3.9-distutils -y && \
+#    apt-get install python3.9-dev -y && \ 
+#    python3.9 -m pip install --upgrade setuptools && \
+#    python3.9 -m pip install --upgrade pip
+#
+# install virtual env tools
+#RUN apt install python3.9-venv -y
+#RUN python3.9 -m pip install virtualenv virtualenvwrapper
 
 
 # Build the .NET source in a separate, discardable build container --------------
 
 FROM mcr.microsoft.com/dotnet/sdk:$DOTNET_VERSION AS build
 
-# Grab the values passed in via command line here so we can use inside this stage
+# A new image so we need to re-declare these
 # See https://docs.docker.com/engine/reference/builder/#scope
-ARG UBUNTU_VERSION=22.04
-ARG DOTNET_VERSION=8.0
+ARG UBUNTU_VERSION=18.04
+ARG DOTNET_VERSION=9.0
+
 ARG CPAI_VERSION
 ARG REPO_NAME
 ARG MODULES_REPO_NAME=CodeProject.AI-Modules
 
-ENV CPAI_VERSION=$CPAI_VERSION
 ENV UBUNTU_VERSION=$UBUNTU_VERSION
 ENV DOTNET_VERSION=$DOTNET_VERSION
+
+ENV CPAI_VERSION=$CPAI_VERSION
 ENV REPO_NAME=$REPO_NAME
 ENV MODULES_REPO_NAME=$MODULES_REPO_NAME
 
@@ -242,13 +278,14 @@ RUN dotnet publish "Server.csproj" -c Release --no-self-contained --force -o /ap
 #            already installed still be visible, while also allowing us to add
 #            installed modules to the folder. This  probably involves volumes
 
-WORKDIR /src/modules/ObjectDetectionYOLOv5Net
+WORKDIR "/src/modules/ObjectDetectionYOLOv5Net"
 RUN dotnet publish ObjectDetectionYOLOv5Net.csproj -c Release --no-self-contained /p:DefineConstants=GPU_NONE \
                    --force -o /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/bin &&               \
     mv -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/bin/modulesettings.*                     \
           /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/  &&                                     \
-    mv -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/modulesettings.docker.build.json         \
+    mv -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/modulesettings.docker.build.rpi64.json   \
           /app/publish/preinstalled-modules/ObjectDetectionYOLOv5Net/modulesettings.docker.json > /dev/null
+
 
 # BEGIN REVIEW ================================================================
 
@@ -269,8 +306,8 @@ COPY [ "/${REPO_NAME}/modules/ObjectDetectionYOLOv5Net/explore.html", "/app/publ
 
 WORKDIR /src
 
-# We need some way to tell the server that for modules built into the Docker
-# image, the venv will be in one place, but for modules downloaded at runtime, 
+# We need some way to tell the server that for modules built into the Docker 
+# image, the venv will be in one place, but for modules downloaded at runtime,
 # the venv for the module will be in a different place.
 #
 # We do this by having a modulesettings.docker.build.json file that has the
@@ -280,30 +317,28 @@ WORKDIR /src
 # 
 # If the module were downloaded and installed during runtime, then the usual 
 # modulesettings.linux.json would be used, and then modulesettings.docker.json
-# would then be loaded (if it existed). The modulesettings.docker.build.json 
+# would then be loaded (if it existed). The modulesettings.docker.build.json
 # file would be ignored.
 #
 # This enables us to have a modulesettings for inside a docker image, and module
 # settings for modules outside the docker image.
 
+COPY ["${MODULES_REPO_NAME}/CodeProject.AI-FaceProcessing/", "/app/publish/preinstalled-modules/FaceProcessing"]
+RUN mv -f  /app/publish/preinstalled-modules/FaceProcessing/modulesettings.docker.build.json \
+           /app/publish/preinstalled-modules/FaceProcessing/modulesettings.docker.json &&    \
+    rm -rf /app/publish/preinstalled-modules/FaceProcessing/intelligencelayer/__pycache__ && \
+    rm -f /app/publish/preinstalled-modules/FaceProcessing/*.zip                   \
+          /app/publish/preinstalled-modules/FaceProcessing/package.bat             \
+          /app/publish/preinstalled-modules/FaceProcessing/*.pyprog
 
-COPY [ "/${MODULES_REPO_NAME}/CodeProject.AI-FaceProcessing/", "/app/publish/preinstalled-modules/FaceProcessing"]
-RUN mv  -f "/app/publish/preinstalled-modules/FaceProcessing/modulesettings.docker.build.json" \
-           "/app/publish/preinstalled-modules/FaceProcessing/modulesettings.docker.json"    && \
-    rm -rf /app/publish/preinstalled-modules/FaceProcessing/intelligencelayer/__pycache__   && \
-    rm -rf /app/publish/preinstalled-modules/FaceProcessing/bin                             && \
-    rm -f /app/publish/preinstalled-modules/FaceProcessing/*.zip        \
-          /app/publish/preinstalled-modules/FaceProcessing/package.bat  \
-          /app/publish/preinstalled-modules/FaceProcessing/*.pyprog     > /dev/null
+COPY ["${MODULES_REPO_NAME}/CodeProject.AI-ObjectDetectionYOLOv5-3.1/", "/app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1"]
+RUN mv -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1/modulesettings.docker.build.jetson.json \
+          /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1/modulesettings.docker.json &&           \
+    rm -rf /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1/__pycache__ &&                         \
+    rm -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1/*.zip        \
+          /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1/package.bat  \
+          /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-3.1/*.pyprog
 
-COPY ["/${REPO_NAME}/modules/ObjectDetectionYOLOv5-6.2/", "/app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2"]
-RUN mv -f "/app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/modulesettings.docker.build.arm64.json" \
-          "/app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/modulesettings.docker.json" && \
-    rm -rf /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/__pycache__                 && \
-    rm -rf /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/bin                         && \
-    rm -f /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/*.zip       \
-          /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/package.bat \
-          /app/publish/preinstalled-modules/ObjectDetectionYOLOv5-6.2/*.pyprog    > /dev/null
 
 # SDK and install scripts
 COPY ["/${REPO_NAME}/src/SDK/Python",        "/app/publish/SDK/Python"]
@@ -311,6 +346,7 @@ COPY ["/${REPO_NAME}/src/SDK/install.sh",    "/app/publish/SDK/install.sh"]
 COPY ["/${REPO_NAME}/src/server/install.sh", "/app/publish/server/install.sh"]
 COPY ["/${REPO_NAME}/src/scripts",           "/app/publish/scripts"]
 COPY ["/${REPO_NAME}/src/setup.sh",          "/app/publish/setup.sh"]
+COPY ["/${REPO_NAME}/.env",                  "/app/publish/.env"]
 
 # Cleanup / setup
 RUN rm -rf /app/publish/SDK/Python/__pycache__ \
@@ -328,6 +364,13 @@ FROM base AS final
 ARG REPO_NAME
 ENV REPO_NAME=$REPO_NAME
 
+ARG CUDA_VERSION=10.2
+ARG CUDA_MAJOR=10
+
+ENV CUDA_VERSION=$CUDA_VERSION
+ENV CUDA_MAJOR=$CUDA_MAJOR
+
+
 # Move published server and modules into place --------------------------------
 
 WORKDIR /app
@@ -340,12 +383,12 @@ COPY --from=build /app/publish .
 # --compile and --global-option now deprecated, the CLFAGS to nothing, but the --no-cache-dir does help
 
 RUN python3.8 -m pip --no-cache-dir install \
-    -r /app/preinstalled-modules/ObjectDetectionYOLOv5-6.2/requirements.linux.arm64.txt \
-    -r /app/preinstalled-modules/FaceProcessing/requirements.linux.arm64.txt \
-    -r /app/SDK/Python/requirements.txt
+    -r "/app/SDK/Python/requirements.txt" \
+    -r "/app/preinstalled-modules/FaceProcessing/requirements.linux.cuda${CUDA_MAJOR}.txt" \
+    -r "/app/preinstalled-modules/ObjectDetectionYOLOv5-6.2/requirements.linux.cuda${CUDA_MAJOR}.txt"
 
 RUN python3.9 -m pip --no-cache-dir install \
-    -r /app/SDK/Python/requirements.txt
+    -r /app/SDK/Python/requirements.txt 
 
 # Add folders for storing persisted user data and modules. This should be mapped
 # to a folder on the host. Typically C:\ProgramData\CodeProject\AI on Windows, 
@@ -357,16 +400,12 @@ RUN mkdir --parents /etc/codeproject/ai                 && \
     mkdir --parents /app/downloads/modules /app/modules && \
     mkdir /app/.vscode
 
-# For debugging the live container using VS Code
 COPY [ "/${REPO_NAME}/.vscode/launch.docker.json", "/app/.vscode/launch.json" ]
 COPY [ "/${REPO_NAME}/.vscode/tasks.docker.json",  "/app/.vscode/tasks.json" ]
 
-# Start the server
-RUN set DOTNET_ROOT=~/.dotnet
-RUN PATH=${PATH}:${DOTNET_ROOT}
-
 WORKDIR /app/server
 # ENTRYPOINT ["dotnet CodeProject.AI.Server.dll"]
+
 CMD ["dotnet", "CodeProject.AI.Server.dll"]
 
 # For debug

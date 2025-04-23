@@ -46,21 +46,10 @@ MINOR=$(grep -o '"Minor"\s*:\s*[^,}]*' "${repo_base}/src/server/version.json" | 
 PATCH=$(grep -o '"Patch"\s*:\s*[^,}]*' "${repo_base}/src/server/version.json" | sed 's/.*: \(.*\)/\1/')
 VERSION="${MAJOR}.${MINOR}.${PATCH}"
 
-# We have two forms of the Docker images due to the base folder structure changing in 2.7.0
-if [[ "$MAJOR" -lt 2 ]] || [[ "$MAJOR" -eq 2 && "$MINOR" -lt 7 ]]; then
-    TARGET_SERVER_PRE_2_7=true
-    DOTNET_VERSION="7.0"
-else
-    TARGET_SERVER_PRE_2_7=false
-    DOTNET_VERSION="8.0"
-fi
+DOTNET_VERSION="9.0"
 
 # Utilities
-if [ "$TARGET_SERVER_PRE_2_7" = "true" ]; then
-    source "${repo_base}/src/SDK/Scripts/utils.sh"
-else
-    source "${repo_base}/src/scripts/utils.sh"
-fi
+source "${repo_base}/src/scripts/utils.sh"
 
 # For places where we need no spaces (eg identifiers)
 PRODUCT_ID="${PRODUCT// /-}"
@@ -219,19 +208,15 @@ copyApplicationDirectory() {
     mkdir -p "$APPLICATION_DIRECTORY/SDK"
     cp -r "${repo_base}/src/SDK/Python" "${APPLICATION_DIRECTORY}/SDK/Python/"
 
-    if [ "$TARGET_SERVER_PRE_2_7" = "true" ]; then
-        mkdir -p "$APPLICATION_DIRECTORY/SDK"
-        cp -r "${repo_base}/src/SDK/Scripts" "${APPLICATION_DIRECTORY}/SDK/Scripts/"
-    else
-        mkdir -p "$APPLICATION_DIRECTORY/devops/utils"
-        cp ${repo_base}/devops/utils/*.sh "${APPLICATION_DIRECTORY}/devops/utils"
-        cp -r "${repo_base}/src/scripts"  "${APPLICATION_DIRECTORY}/scripts/"
-    fi
+    mkdir -p "$APPLICATION_DIRECTORY/devops/utils"
+    cp ${repo_base}/devops/utils/*.sh "${APPLICATION_DIRECTORY}/devops/utils"
+    cp -r "${repo_base}/src/scripts"  "${APPLICATION_DIRECTORY}/scripts/"
 
     cp "${repo_base}/src/SDK/install.sh" "${APPLICATION_DIRECTORY}/SDK/"
     cp "${repo_base}/src/server/install.sh" "${APPLICATION_DIRECTORY}/server/"
 
     cp "${repo_base}/src/setup.sh" "${APPLICATION_DIRECTORY}/"
+    cp "${repo_base}/.env"         "${APPLICATION_DIRECTORY}/"
 
     # Quick cleanup
     find "${APPLICATION_DIRECTORY}" -name __pycache__ -type d -exec rm -rf {} \;  >/dev/null 2>&1
@@ -370,6 +355,14 @@ function cleanDirectories(){
     rm -rf "${INSTALLER_DIRECTORY}"
 }
 
+function zipUpInstaller () {
+    log_info "Zipping up installer."
+    sudo apt-get install zip > /dev/null
+    zip "${INSTALLER_FILENAME%.*}.zip" "${INSTALLER_FILENAME}"
+    sudo chmod a+rw "${INSTALLER_FILENAME%.*}.zip"
+    chown $USER "${INSTALLER_FILENAME%.*}.zip"
+}
+
 
 # Let's begin
 log_info "Installer generating process started."
@@ -383,10 +376,8 @@ addLaunchShortcutToApp
 createInstaller
 moveInstallPackage
 cleanDirectories
+zipUpInstaller
 
-log_info "Zipping up installer."
-sudo apt-get install zip > /dev/null
-zip "${INSTALLER_FILENAME%.*}.zip" "${INSTALLER_FILENAME}"
 
 writeLine
 log_info "DONE! Installer is in ${INSTALLER_FILENAME}"
